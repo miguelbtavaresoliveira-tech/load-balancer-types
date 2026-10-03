@@ -1,0 +1,11 @@
+# Uso:  NGINX_MODE=weighted docker compose up
+# Modos: round-robin | weighted | least-conn | sticky   (least-time exige NGINX Plus)
+services:
+  nginx:
+    image: nginx:stable
+    ports:
+      - "8081:80"
+    volumes:
+      - ./nginx/${NGINX_MODE:-round-robin}.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
