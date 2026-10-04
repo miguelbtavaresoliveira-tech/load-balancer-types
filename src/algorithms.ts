@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import  type { Backend, Strategy } from "./types";
+import type { Backend, Strategy } from "./types";
 
 /* 1) Round Robin: um servidor por vez, em ordem circular */
 export class RoundRobin implements Strategy {
@@ -7,7 +7,7 @@ export class RoundRobin implements Strategy {
     private next = 0;
 
     pick(backends: Backend[]): Backend | undefined {
-        if (backends.length === 0 ) return undefined
+        if (backends.length === 0) return undefined
         const backend = backends[this.next % backends.length]
         this.next = (this.next + 1) % backends.length
         return backend
@@ -49,10 +49,10 @@ export class WeightedRoundRobin implements Strategy {
 }
 
 /* Desempate rotativo: evita que o primeiro da lista sempre ganhe */
-function pickMindBy (
+function pickMindBy(
     backends: Backend[],
     score: (b: Backend) => number, tieCounter: { n: number },
-) : Backend | undefined {
+): Backend | undefined {
     if (backends.length === 0) return undefined;
     const scores = backends.map(score);
     const min = Math.min(...scores);
@@ -68,4 +68,88 @@ export class LeastConnections implements Strategy {
     pick(backends: Backend[]): Backend | undefined {
         return pickMindBy(backends, (b) => b.activeConnections, this.tie)
     }
+}
+
+
+/*
+* 4) Least Response Time: menor tempo de resposta(tempo médio x (conexões ativas + 1))
+* Começa com o tempo 0, então todos são testados no início.
+*/
+export class leastResponseTime implements Strategy {
+    readonly name = "least-response-time";
+    private tie = { n: 0 }
+
+    pick(backends: Backend[]): Backend | undefined {
+        return pickMindBy(
+            backends,
+            (b) => b.avgResponseTimeMs * (b.activeConnections + 1),
+            this.tie,
+        );
+    }
+}
+
+
+/*
+* 5) Sticky Round Robin: o primeiro acesso do cliente é distribuido por 
+* round robin e o servidor escolhido fica gravado em um coookie. os 
+* proximos acessos irão sempre para o mesmo servidor (enquanto ele estiver saudavel)
+*/
+
+const COOKIE_NAME = "LB_BACKEND";
+
+function parseCookies(header: string | undefined): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const part of (header ?? "").split(";")) {
+        const i = part.indexOf("=")
+        if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim()
+    }
+    return out
+}
+
+
+export class StickyRoundRobin implements Strategy {
+    readonly name = "sticky-round-robin"
+    private fallback = new RoundRobin()
+
+    pick(backends: Backend[], req: IncomingMessage): Backend | undefined {
+        const id = parseCookies(req.headers.cookie)[COOKIE_NAME]
+        const sticky = id ? backends.find((b) => b.id === id) : undefined
+        return sticky ?? this.fallback.pick(backends)
+    }
+
+    afterPick(backend: Backend, req: IncomingMessage, res: ServerResponse): void {
+        const current = parseCookies(req.headers.cookie)[COOKIE_NAME]
+        if (current !== backend.id) {
+            res.setHeader(
+                "Set-Cookie",
+                `${COOKIE_NAME}=${backend.id}; Path=/; HttpOnly; Max-Age=3600; SameSite=Lax`,
+            )
+        }
+    }
+}
+
+
+export const ALGORITHMS = [
+    "round-robin",
+    "weighted",
+    "least-connections",
+    "least-response-time",
+    "sticky",
+] as const 
+
+export function createStrategy(name: string): Strategy {
+  switch (name) {
+    case "round-robin":
+      return new RoundRobin();
+    case "weighted":
+      return new WeightedRoundRobin();
+    case "least-connections":
+      return new LeastConnections();
+    case "least-response-time":
+      return new leastResponseTime();
+    case "sticky":
+      return new StickyRoundRobin();
+    default:
+      throw new Error(`Algoritmo desconhecido: "${name}". Use: ${ALGORITHMS.join(" | ")}`);
+  }
 }
