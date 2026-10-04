@@ -34,6 +34,7 @@ export class WeightedRoundRobin implements Strategy {
         for (const b of backends) {
             const value = (this.current.get(b.id) ?? 0) + b.weight;
             this.current.set(b.id, value);
+
             total += b.weight;
             if (value > bestValue) {
                 best = b;
@@ -44,5 +45,27 @@ export class WeightedRoundRobin implements Strategy {
 
         this.current.set(best.id, bestValue - total)
         return best
+    }
+}
+
+/* Desempate rotativo: evita que o primeiro da lista sempre ganhe */
+function pickMindBy (
+    backends: Backend[],
+    score: (b: Backend) => number, tieCounter: { n: number },
+) : Backend | undefined {
+    if (backends.length === 0) return undefined;
+    const scores = backends.map(score);
+    const min = Math.min(...scores);
+    const candidates = backends.filter((_, i) => scores[i] === min)
+    return candidates[tieCounter.n++ % candidates.length]
+}
+
+/* 3) Least connections: quem tem menos requisições em andamento */
+export class LeastConnections implements Strategy {
+    readonly name = "least-connections";
+    private tie = { n: 0 }
+
+    pick(backends: Backend[]): Backend | undefined {
+        return pickMindBy(backends, (b) => b.activeConnections, this.tie)
     }
 }
