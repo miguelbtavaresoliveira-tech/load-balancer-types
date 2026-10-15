@@ -1,3 +1,3 @@
-﻿# PRD - load-balancer-types
+# PRD - load-balancer-types
 
 Documentacao inicial do projeto.
